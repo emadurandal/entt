@@ -1,0 +1,29 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+	{
+		"name": "Launch Project",
+		"type": "cppdbg",
+		"request": "launch",
+		// Change to godot.linuxbsd.editor.dev.x86_64.llvm for llvm-based builds.
+		"program": "${workspaceFolder}/build/test/bin/entt",
+		// Change the arguments below for the project you want to test with.
+		// To run the project instead of editing it, remove the "--editor" argument.
+		"args": [],
+		"stopAtEntry": false,
+		"cwd": "${workspaceFolder}",
+		"environment": [],
+		"externalConsole": false,
+		"setupCommands":
+		[
+		  {
+			"description": "Enable pretty-printing for gdb",
+			"text": "-enable-pretty-printing",
+			"ignoreFailures": true
+		  }
+		],
+		"MIMode": "lldb",
+		"preLaunchTask": "build"
+	}
+	]
+}
