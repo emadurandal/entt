@@ -7,13 +7,13 @@
 
 struct foo_process: entt::process<foo_process, entt::scheduler::delta_type> {
     foo_process(std::function<void()> upd, std::function<void()> abort)
-        : on_update{upd}, on_aborted{abort} {}
+        : on_update{std::move(upd)}, on_aborted{std::move(abort)} {}
 
-    void update(delta_type, void *) {
+    void update(delta_type, void *) const {
         on_update();
     }
 
-    void aborted() {
+    void aborted() const {
         on_aborted();
     }
 
@@ -22,39 +22,27 @@ struct foo_process: entt::process<foo_process, entt::scheduler::delta_type> {
 };
 
 struct succeeded_process: entt::process<succeeded_process, entt::scheduler::delta_type> {
-    void update(delta_type, void *) {
-        ++invoked;
+    void update(delta_type, void *data) {
+        ++static_cast<std::pair<int, int> *>(data)->first;
         succeed();
     }
-
-    inline static unsigned int invoked;
 };
 
 struct failed_process: entt::process<failed_process, entt::scheduler::delta_type> {
-    void update(delta_type, void *) {
-        ++invoked;
+    void update(delta_type, void *data) {
+        ++static_cast<std::pair<int, int> *>(data)->second;
         fail();
     }
-
-    inline static unsigned int invoked;
 };
 
-struct Scheduler: ::testing::Test {
-    void SetUp() override {
-        succeeded_process::invoked = 0u;
-        failed_process::invoked = 0u;
-    }
-};
-
-TEST_F(Scheduler, Functionalities) {
+TEST(Scheduler, Functionalities) {
     entt::scheduler scheduler{};
-    entt::scheduler other{};
+    entt::scheduler other{std::move(scheduler)};
+
+    scheduler = std::move(other);
 
     bool updated = false;
     bool aborted = false;
-
-    ASSERT_NO_FATAL_FAILURE(entt::scheduler{std::move(scheduler)});
-    ASSERT_NO_FATAL_FAILURE(scheduler = std::move(other));
 
     ASSERT_EQ(scheduler.size(), 0u);
     ASSERT_TRUE(scheduler.empty());
@@ -81,7 +69,7 @@ TEST_F(Scheduler, Functionalities) {
     ASSERT_TRUE(scheduler.empty());
 }
 
-TEST_F(Scheduler, Swap) {
+TEST(Scheduler, Swap) {
     entt::scheduler scheduler{};
     entt::scheduler other{};
     int counter{};
@@ -108,8 +96,9 @@ TEST_F(Scheduler, Swap) {
     ASSERT_EQ(counter, 2);
 }
 
-TEST_F(Scheduler, Then) {
+TEST(Scheduler, Then) {
     entt::scheduler scheduler{};
+    std::pair<int, int> counter{};
 
     scheduler
         // failing process with successor
@@ -125,18 +114,15 @@ TEST_F(Scheduler, Then) {
         .attach<succeeded_process>()
         .then<succeeded_process>();
 
-    ASSERT_EQ(succeeded_process::invoked, 0u);
-    ASSERT_EQ(failed_process::invoked, 0u);
-
     while(!scheduler.empty()) {
-        scheduler.update(0);
+        scheduler.update(0, &counter);
     }
 
-    ASSERT_EQ(succeeded_process::invoked, 6u);
-    ASSERT_EQ(failed_process::invoked, 2u);
+    ASSERT_EQ(counter.first, 6u);
+    ASSERT_EQ(counter.second, 2u);
 }
 
-TEST_F(Scheduler, Functor) {
+TEST(Scheduler, Functor) {
     entt::scheduler scheduler{};
 
     bool first_functor = false;
@@ -165,34 +151,32 @@ TEST_F(Scheduler, Functor) {
     ASSERT_TRUE(scheduler.empty());
 }
 
-TEST_F(Scheduler, SpawningProcess) {
+TEST(Scheduler, SpawningProcess) {
     entt::scheduler scheduler{};
+    std::pair<int, int> counter{};
 
     scheduler.attach([&scheduler](auto, void *, auto resolve, auto) {
         scheduler.attach<succeeded_process>().then<failed_process>();
         resolve();
     });
 
-    ASSERT_EQ(succeeded_process::invoked, 0u);
-    ASSERT_EQ(failed_process::invoked, 0u);
-
     while(!scheduler.empty()) {
-        scheduler.update(0);
+        scheduler.update(0, &counter);
     }
 
-    ASSERT_EQ(succeeded_process::invoked, 1u);
-    ASSERT_EQ(failed_process::invoked, 1u);
+    ASSERT_EQ(counter.first, 1u);
+    ASSERT_EQ(counter.second, 1u);
 }
 
-TEST_F(Scheduler, CustomAllocator) {
-    std::allocator<void> allocator{};
+TEST(Scheduler, CustomAllocator) {
+    const std::allocator<void> allocator{};
     entt::scheduler scheduler{allocator};
 
     ASSERT_EQ(scheduler.get_allocator(), allocator);
     ASSERT_FALSE(scheduler.get_allocator() != allocator);
 
     scheduler.attach([](auto &&...) {});
-    decltype(scheduler) other{std::move(scheduler), allocator};
+    const decltype(scheduler) other{std::move(scheduler), allocator};
 
     ASSERT_EQ(other.size(), 1u);
 }

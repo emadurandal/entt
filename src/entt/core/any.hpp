@@ -13,34 +13,30 @@
 
 namespace entt {
 
-/**
- * @cond TURN_OFF_DOXYGEN
- * Internal details not to be documented.
- */
-
+/*! @cond TURN_OFF_DOXYGEN */
 namespace internal {
 
 enum class any_operation : std::uint8_t {
-    copy,
-    move,
     transfer,
     assign,
     destroy,
     compare,
+    copy,
+    move,
     get
 };
 
 } // namespace internal
-
-/**
- * Internal details not to be documented.
- * @endcond
- */
+/*! @endcond */
 
 /*! @brief Possible modes of an any object. */
 enum class any_policy : std::uint8_t {
-    /*! @brief Default mode, the object owns the contained element. */
-    owner,
+    /*! @brief Default mode, the object does not own any elements. */
+    empty,
+    /*! @brief Owning mode, the object owns a dynamically allocated element. */
+    dynamic,
+    /*! @brief Owning mode, the object owns an embedded element. */
+    embedded,
     /*! @brief Aliasing mode, the object _points_ to a non-const element. */
     ref,
     /*! @brief Const aliasing mode, the object _points_ to a const element. */
@@ -58,66 +54,68 @@ class basic_any {
     using vtable_type = const void *(const operation, const basic_any &, const void *);
 
     struct storage_type {
-        alignas(Align) std::byte data[Len + !Len];
+        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays)
+        alignas(Align) std::byte data[Len + static_cast<std::size_t>(Len == 0u)];
     };
 
     template<typename Type>
-    static constexpr bool in_situ = Len && alignof(Type) <= Align && sizeof(Type) <= Len && std::is_nothrow_move_constructible_v<Type>;
+    static constexpr bool in_situ = (Len != 0u) && alignof(Type) <= Align && sizeof(Type) <= Len && std::is_nothrow_move_constructible_v<Type>;
 
     template<typename Type>
     static const void *basic_vtable(const operation op, const basic_any &value, const void *other) {
         static_assert(!std::is_void_v<Type> && std::is_same_v<std::remove_cv_t<std::remove_reference_t<Type>>, Type>, "Invalid type");
-        const Type *element = nullptr;
+        const Type *elem = nullptr;
 
         if constexpr(in_situ<Type>) {
-            element = (value.mode == any_policy::owner) ? reinterpret_cast<const Type *>(&value.storage) : static_cast<const Type *>(value.instance);
+            elem = (value.mode == any_policy::embedded) ? reinterpret_cast<const Type *>(&value.storage) : static_cast<const Type *>(value.instance);
         } else {
-            element = static_cast<const Type *>(value.instance);
+            elem = static_cast<const Type *>(value.instance);
         }
 
         switch(op) {
-        case operation::copy:
-            if constexpr(std::is_copy_constructible_v<Type>) {
-                static_cast<basic_any *>(const_cast<void *>(other))->initialize<Type>(*element);
-            }
-            break;
-        case operation::move:
-            if constexpr(in_situ<Type>) {
-                if(value.mode == any_policy::owner) {
-                    return new(&static_cast<basic_any *>(const_cast<void *>(other))->storage) Type{std::move(*const_cast<Type *>(element))};
-                }
-            }
-
-            return (static_cast<basic_any *>(const_cast<void *>(other))->instance = std::exchange(const_cast<basic_any &>(value).instance, nullptr));
         case operation::transfer:
             if constexpr(std::is_move_assignable_v<Type>) {
-                *const_cast<Type *>(element) = std::move(*static_cast<Type *>(const_cast<void *>(other)));
+                *const_cast<Type *>(elem) = std::move(*static_cast<Type *>(const_cast<void *>(other)));
                 return other;
             }
             [[fallthrough]];
         case operation::assign:
             if constexpr(std::is_copy_assignable_v<Type>) {
-                *const_cast<Type *>(element) = *static_cast<const Type *>(other);
+                *const_cast<Type *>(elem) = *static_cast<const Type *>(other);
                 return other;
             }
             break;
         case operation::destroy:
             if constexpr(in_situ<Type>) {
-                element->~Type();
+                (value.mode == any_policy::embedded) ? elem->~Type() : (delete elem);
             } else if constexpr(std::is_array_v<Type>) {
-                delete[] element;
+                delete[] elem;
             } else {
-                delete element;
+                delete elem;
             }
             break;
         case operation::compare:
             if constexpr(!std::is_function_v<Type> && !std::is_array_v<Type> && is_equality_comparable_v<Type>) {
-                return *element == *static_cast<const Type *>(other) ? other : nullptr;
+                return *elem == *static_cast<const Type *>(other) ? other : nullptr;
             } else {
-                return (element == other) ? other : nullptr;
+                return (elem == other) ? other : nullptr;
             }
+        case operation::copy:
+            if constexpr(std::is_copy_constructible_v<Type>) {
+                static_cast<basic_any *>(const_cast<void *>(other))->initialize<Type>(*elem);
+            }
+            break;
+        case operation::move:
+            ENTT_ASSERT(value.mode == any_policy::embedded, "Unexpected policy type");
+            if constexpr(in_situ<Type>) {
+                return ::new(&static_cast<basic_any *>(const_cast<void *>(other))->storage) Type{std::move(*const_cast<Type *>(elem))};
+            }
+            [[fallthrough]];
         case operation::get:
-            return element;
+            ENTT_ASSERT(value.mode == any_policy::embedded, "Unexpected policy type");
+            if constexpr(in_situ<Type>) {
+                return elem;
+            }
         }
 
         return nullptr;
@@ -125,26 +123,35 @@ class basic_any {
 
     template<typename Type, typename... Args>
     void initialize([[maybe_unused]] Args &&...args) {
-        info = &type_id<std::remove_cv_t<std::remove_reference_t<Type>>>();
+        using plain_type = std::remove_cv_t<std::remove_reference_t<Type>>;
+        info = &type_id<plain_type>();
 
         if constexpr(!std::is_void_v<Type>) {
-            vtable = basic_vtable<std::remove_cv_t<std::remove_reference_t<Type>>>;
+            vtable = basic_vtable<plain_type>;
 
             if constexpr(std::is_lvalue_reference_v<Type>) {
                 static_assert((std::is_lvalue_reference_v<Args> && ...) && (sizeof...(Args) == 1u), "Invalid arguments");
                 mode = std::is_const_v<std::remove_reference_t<Type>> ? any_policy::cref : any_policy::ref;
                 instance = (std::addressof(args), ...);
-            } else if constexpr(in_situ<std::remove_cv_t<std::remove_reference_t<Type>>>) {
-                if constexpr(std::is_aggregate_v<std::remove_cv_t<std::remove_reference_t<Type>>> && (sizeof...(Args) != 0u || !std::is_default_constructible_v<std::remove_cv_t<std::remove_reference_t<Type>>>)) {
-                    new(&storage) std::remove_cv_t<std::remove_reference_t<Type>>{std::forward<Args>(args)...};
+            } else if constexpr(in_situ<plain_type>) {
+                mode = any_policy::embedded;
+
+                if constexpr(std::is_aggregate_v<plain_type> && (sizeof...(Args) != 0u || !std::is_default_constructible_v<plain_type>)) {
+                    ::new(&storage) plain_type{std::forward<Args>(args)...};
                 } else {
-                    new(&storage) std::remove_cv_t<std::remove_reference_t<Type>>(std::forward<Args>(args)...);
+                    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
+                    ::new(&storage) plain_type(std::forward<Args>(args)...);
                 }
             } else {
-                if constexpr(std::is_aggregate_v<std::remove_cv_t<std::remove_reference_t<Type>>> && (sizeof...(Args) != 0u || !std::is_default_constructible_v<std::remove_cv_t<std::remove_reference_t<Type>>>)) {
-                    instance = new std::remove_cv_t<std::remove_reference_t<Type>>{std::forward<Args>(args)...};
+                mode = any_policy::dynamic;
+
+                if constexpr(std::is_aggregate_v<plain_type> && (sizeof...(Args) != 0u || !std::is_default_constructible_v<plain_type>)) {
+                    instance = new plain_type{std::forward<Args>(args)...};
+                } else if constexpr(std::is_array_v<plain_type>) {
+                    static_assert(sizeof...(Args) == 0u, "Invalid arguments");
+                    instance = new plain_type[std::extent_v<plain_type>]();
                 } else {
-                    instance = new std::remove_cv_t<std::remove_reference_t<Type>>(std::forward<Args>(args)...);
+                    instance = new plain_type(std::forward<Args>(args)...);
                 }
             }
         }
@@ -174,11 +181,22 @@ public:
      */
     template<typename Type, typename... Args>
     explicit basic_any(std::in_place_type_t<Type>, Args &&...args)
-        : instance{},
-          info{},
-          vtable{},
-          mode{any_policy::owner} {
+        : instance{} {
         initialize<Type>(std::forward<Args>(args)...);
+    }
+
+    /**
+     * @brief Constructs a wrapper taking ownership of the passed object.
+     * @tparam Type Type of object to use to initialize the wrapper.
+     * @param value A pointer to an object to take ownership of.
+     */
+    template<typename Type, typename = std::enable_if_t<!std::is_const_v<Type> && !std::is_void_v<Type>>>
+    explicit basic_any(std::in_place_t, Type *value)
+        : instance{value} {
+        if(instance != nullptr) {
+            initialize<Type &>(*value);
+            mode = any_policy::dynamic;
+        }
     }
 
     /**
@@ -210,14 +228,16 @@ public:
           info{other.info},
           vtable{other.vtable},
           mode{other.mode} {
-        if(other.vtable) {
+        if(other.mode == any_policy::embedded) {
             other.vtable(operation::move, other, this);
+        } else if(other.mode != any_policy::empty) {
+            instance = std::exchange(other.instance, nullptr);
         }
     }
 
     /*! @brief Frees the internal storage, whatever it means. */
     ~basic_any() {
-        if(vtable && (mode == any_policy::owner)) {
+        if(owner()) {
             vtable(operation::destroy, *this, nullptr);
         }
     }
@@ -228,10 +248,12 @@ public:
      * @return This any object.
      */
     basic_any &operator=(const basic_any &other) {
-        reset();
+        if(this != &other) {
+            reset();
 
-        if(other.vtable) {
-            other.vtable(operation::copy, other, this);
+            if(other.vtable) {
+                other.vtable(operation::copy, other, this);
+            }
         }
 
         return *this;
@@ -243,14 +265,19 @@ public:
      * @return This any object.
      */
     basic_any &operator=(basic_any &&other) noexcept {
+        ENTT_ASSERT(this != &other, "Self move assignment");
+
         reset();
 
-        if(other.vtable) {
+        if(other.mode == any_policy::embedded) {
             other.vtable(operation::move, other, this);
-            info = other.info;
-            vtable = other.vtable;
-            mode = other.mode;
+        } else if(other.mode != any_policy::empty) {
+            instance = std::exchange(other.instance, nullptr);
         }
+
+        info = other.info;
+        vtable = other.vtable;
+        mode = other.mode;
 
         return *this;
     }
@@ -261,9 +288,8 @@ public:
      * @param value An instance of an object to use to initialize the wrapper.
      * @return This any object.
      */
-    template<typename Type>
-    std::enable_if_t<!std::is_same_v<std::decay_t<Type>, basic_any>, basic_any &>
-    operator=(Type &&value) {
+    template<typename Type, typename = std::enable_if_t<!std::is_same_v<std::decay_t<Type>, basic_any>>>
+    basic_any &operator=(Type &&value) {
         emplace<std::decay_t<Type>>(std::forward<Type>(value));
         return *this;
     }
@@ -281,7 +307,7 @@ public:
      * @return An opaque pointer the contained instance, if any.
      */
     [[nodiscard]] const void *data() const noexcept {
-        return vtable ? vtable(operation::get, *this, nullptr) : nullptr;
+        return (mode == any_policy::embedded) ? vtable(operation::get, *this, nullptr) : instance;
     }
 
     /**
@@ -340,9 +366,9 @@ public:
         if(vtable && mode != any_policy::cref && *info == *other.info) {
             if(auto *val = other.data(); val) {
                 return (vtable(operation::transfer, *this, val) != nullptr);
-            } else {
-                return (vtable(operation::assign, *this, std::as_const(other).data()) != nullptr);
             }
+
+            return (vtable(operation::assign, *this, std::as_const(other).data()) != nullptr);
         }
 
         return false;
@@ -350,15 +376,14 @@ public:
 
     /*! @brief Destroys contained object */
     void reset() {
-        if(vtable && (mode == any_policy::owner)) {
+        if(owner()) {
             vtable(operation::destroy, *this, nullptr);
         }
 
-        // unnecessary but it helps to detect nasty bugs
-        ENTT_ASSERT((instance = nullptr) == nullptr, "");
+        instance = nullptr;
         info = &type_id<void>();
         vtable = nullptr;
-        mode = any_policy::owner;
+        mode = any_policy::empty;
     }
 
     /**
@@ -408,8 +433,8 @@ public:
      * @brief Returns true if a wrapper owns its object, false otherwise.
      * @return True if the wrapper owns its object, false otherwise.
      */
-    [[deprecated("use policy() and any_policy instead")]] [[nodiscard]] bool owner() const noexcept {
-        return (mode == any_policy::owner);
+    [[nodiscard]] bool owner() const noexcept {
+        return (mode == any_policy::dynamic || mode == any_policy::embedded);
     }
 
     /**
@@ -425,9 +450,9 @@ private:
         const void *instance;
         storage_type storage;
     };
-    const type_info *info;
-    vtable_type *vtable;
-    any_policy mode;
+    const type_info *info{&type_id<void>()};
+    vtable_type *vtable{};
+    any_policy mode{any_policy::empty};
 };
 
 /**
@@ -439,7 +464,7 @@ private:
  * @return The element converted to the requested type.
  */
 template<typename Type, std::size_t Len, std::size_t Align>
-[[nodiscard]] Type any_cast(const basic_any<Len, Align> &data) noexcept {
+[[nodiscard]] std::remove_const_t<Type> any_cast(const basic_any<Len, Align> &data) noexcept {
     const auto *const instance = any_cast<std::remove_reference_t<Type>>(&data);
     ENTT_ASSERT(instance, "Invalid instance");
     return static_cast<Type>(*instance);
@@ -447,7 +472,7 @@ template<typename Type, std::size_t Len, std::size_t Align>
 
 /*! @copydoc any_cast */
 template<typename Type, std::size_t Len, std::size_t Align>
-[[nodiscard]] Type any_cast(basic_any<Len, Align> &data) noexcept {
+[[nodiscard]] std::remove_const_t<Type> any_cast(basic_any<Len, Align> &data) noexcept {
     // forces const on non-reference types to make them work also with wrappers for const references
     auto *const instance = any_cast<std::remove_reference_t<const Type>>(&data);
     ENTT_ASSERT(instance, "Invalid instance");
@@ -456,13 +481,13 @@ template<typename Type, std::size_t Len, std::size_t Align>
 
 /*! @copydoc any_cast */
 template<typename Type, std::size_t Len, std::size_t Align>
-[[nodiscard]] Type any_cast(basic_any<Len, Align> &&data) noexcept {
+[[nodiscard]] std::remove_const_t<Type> any_cast(basic_any<Len, Align> &&data) noexcept {
     if constexpr(std::is_copy_constructible_v<std::remove_cv_t<std::remove_reference_t<Type>>>) {
         if(auto *const instance = any_cast<std::remove_reference_t<Type>>(&data); instance) {
             return static_cast<Type>(std::move(*instance));
-        } else {
-            return any_cast<Type>(data);
         }
+
+        return any_cast<Type>(data);
     } else {
         auto *const instance = any_cast<std::remove_reference_t<Type>>(&data);
         ENTT_ASSERT(instance, "Invalid instance");
