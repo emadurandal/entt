@@ -67,21 +67,21 @@ public:
     using sink_type = sink<sigh<Ret(Args...), Allocator>>;
 
     /*! @brief Default constructor. */
-    sigh() noexcept(std::is_nothrow_default_constructible_v<allocator_type> &&std::is_nothrow_constructible_v<container_type, const allocator_type &>)
+    sigh() noexcept(noexcept(allocator_type{}))
         : sigh{allocator_type{}} {}
 
     /**
      * @brief Constructs a signal handler with a given allocator.
      * @param allocator The allocator to use.
      */
-    explicit sigh(const allocator_type &allocator) noexcept(std::is_nothrow_constructible_v<container_type, const allocator_type &>)
+    explicit sigh(const allocator_type &allocator) noexcept
         : calls{allocator} {}
 
     /**
      * @brief Copy constructor.
      * @param other The instance to copy from.
      */
-    sigh(const sigh &other) noexcept(std::is_nothrow_copy_constructible_v<container_type>)
+    sigh(const sigh &other)
         : calls{other.calls} {}
 
     /**
@@ -89,14 +89,14 @@ public:
      * @param other The instance to copy from.
      * @param allocator The allocator to use.
      */
-    sigh(const sigh &other, const allocator_type &allocator) noexcept(std::is_nothrow_constructible_v<container_type, const container_type &, const allocator_type &>)
+    sigh(const sigh &other, const allocator_type &allocator)
         : calls{other.calls, allocator} {}
 
     /**
      * @brief Move constructor.
      * @param other The instance to move from.
      */
-    sigh(sigh &&other) noexcept(std::is_nothrow_move_constructible_v<container_type>)
+    sigh(sigh &&other) noexcept
         : calls{std::move(other.calls)} {}
 
     /**
@@ -104,15 +104,18 @@ public:
      * @param other The instance to move from.
      * @param allocator The allocator to use.
      */
-    sigh(sigh &&other, const allocator_type &allocator) noexcept(std::is_nothrow_constructible_v<container_type, container_type &&, const allocator_type &>)
+    sigh(sigh &&other, const allocator_type &allocator)
         : calls{std::move(other.calls), allocator} {}
+
+    /*! @brief Default destructor. */
+    ~sigh() = default;
 
     /**
      * @brief Copy assignment operator.
      * @param other The instance to copy from.
      * @return This signal handler.
      */
-    sigh &operator=(const sigh &other) noexcept(std::is_nothrow_copy_assignable_v<container_type>) {
+    sigh &operator=(const sigh &other) {
         calls = other.calls;
         return *this;
     }
@@ -122,8 +125,8 @@ public:
      * @param other The instance to move from.
      * @return This signal handler.
      */
-    sigh &operator=(sigh &&other) noexcept(std::is_nothrow_move_assignable_v<container_type>) {
-        calls = std::move(other.calls);
+    sigh &operator=(sigh &&other) noexcept {
+        swap(other);
         return *this;
     }
 
@@ -131,7 +134,7 @@ public:
      * @brief Exchanges the contents with those of a given signal handler.
      * @param other Signal handler to exchange the content with.
      */
-    void swap(sigh &other) noexcept(std::is_nothrow_swappable_v<container_type>) {
+    void swap(sigh &other) noexcept {
         using std::swap;
         swap(calls, other.calls);
     }
@@ -233,8 +236,7 @@ class connection {
 public:
     /*! @brief Default constructor. */
     connection()
-        : disconnect{},
-          signal{} {}
+        : signal{} {}
 
     /**
      * @brief Checks whether a connection is properly initialized.
@@ -314,7 +316,7 @@ struct scoped_connection {
      * @return This scoped connection.
      */
     scoped_connection &operator=(connection other) {
-        conn = std::move(other);
+        conn = other;
         return *this;
     }
 
@@ -372,15 +374,26 @@ class sink<sigh<Ret(Args...), Allocator>> {
 
     template<typename Func>
     void disconnect_if(Func callback) {
-        for(auto pos = signal->calls.size(); pos; --pos) {
-            if(auto &elem = signal->calls[pos - 1u]; callback(elem)) {
-                elem = std::move(signal->calls.back());
-                signal->calls.pop_back();
+        auto &ref = signal_or_assert();
+
+        for(auto pos = ref.calls.size(); pos; --pos) {
+            if(auto &elem = ref.calls[pos - 1u]; callback(elem)) {
+                elem = std::move(ref.calls.back());
+                ref.calls.pop_back();
             }
         }
     }
 
+    [[nodiscard]] auto &signal_or_assert() const noexcept {
+        ENTT_ASSERT(signal != nullptr, "Invalid pointer to signal");
+        return *signal;
+    }
+
 public:
+    /*! @brief Constructs an invalid sink. */
+    sink() noexcept
+        : signal{} {}
+
     /**
      * @brief Constructs a sink that is allowed to modify a given signal.
      * @param ref A valid reference to a signal object.
@@ -393,7 +406,7 @@ public:
      * @return True if the sink has no listeners connected, false otherwise.
      */
     [[nodiscard]] bool empty() const noexcept {
-        return signal->calls.empty();
+        return signal_or_assert().calls.empty();
     }
 
     /**
@@ -410,11 +423,11 @@ public:
 
         delegate_type call{};
         call.template connect<Candidate>(value_or_instance...);
-        signal->calls.push_back(std::move(call));
+        signal_or_assert().calls.push_back(std::move(call));
 
         delegate<void(void *)> conn{};
         conn.template connect<&release<Candidate, Type...>>(value_or_instance...);
-        return {std::move(conn), signal};
+        return {conn, signal};
     }
 
     /**
@@ -437,14 +450,21 @@ public:
      * @param value_or_instance A valid object that fits the purpose.
      */
     void disconnect(const void *value_or_instance) {
-        if(value_or_instance) {
-            disconnect_if([value_or_instance](const auto &elem) { return elem.data() == value_or_instance; });
-        }
+        ENTT_ASSERT(value_or_instance != nullptr, "Invalid value or instance");
+        disconnect_if([value_or_instance](const auto &elem) { return elem.data() == value_or_instance; });
     }
 
     /*! @brief Disconnects all the listeners from a signal. */
     void disconnect() {
-        signal->calls.clear();
+        signal_or_assert().calls.clear();
+    }
+
+    /**
+     * @brief Returns true if a sink is correctly initialized, false otherwise.
+     * @return True if a sink is correctly initialized, false otherwise.
+     */
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return signal != nullptr;
     }
 
 private:

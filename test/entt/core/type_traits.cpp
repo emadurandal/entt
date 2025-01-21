@@ -8,7 +8,7 @@
 #include <gtest/gtest.h>
 #include <entt/core/hashed_string.hpp>
 #include <entt/core/type_traits.hpp>
-#include "../common/non_comparable.h"
+#include "../../common/non_comparable.h"
 
 struct nlohmann_json_like final {
     using value_type = nlohmann_json_like;
@@ -19,19 +19,19 @@ struct nlohmann_json_like final {
 };
 
 struct clazz {
-    char foo(int) {
-        return {};
+    char foo(int value) {
+        return static_cast<char>(quux = (value != 0));
     }
 
-    int bar(double, float) const {
-        return {};
+    [[nodiscard]] int bar(double, float) const {
+        return static_cast<int>(quux);
     }
 
     bool quux;
 };
 
 int free_function(int, const double &) {
-    return 42;
+    return 64;
 }
 
 template<typename, typename Type = void>
@@ -60,8 +60,10 @@ struct UnpackAsValue: ::testing::Test {
 TEST(SizeOf, Functionalities) {
     ASSERT_EQ(entt::size_of_v<void>, 0u);
     ASSERT_EQ(entt::size_of_v<char>, sizeof(char));
+    // NOLINTBEGIN(*-avoid-c-arrays)
     ASSERT_EQ(entt::size_of_v<int[]>, 0u);
     ASSERT_EQ(entt::size_of_v<int[3]>, sizeof(int[3]));
+    // NOLINTEND(*-avoid-c-arrays)
 }
 
 TEST_F(UnpackAsType, Functionalities) {
@@ -70,20 +72,20 @@ TEST_F(UnpackAsType, Functionalities) {
 }
 
 TEST_F(UnpackAsValue, Functionalities) {
-    ASSERT_EQ((this->test_for<2>()('c', 42., true)), 6);
-    ASSERT_EQ((this->test_for<true>()('c', 42.)), 2);
+    ASSERT_EQ((this->test_for<2>()('c', 1., true)), 6);
+    ASSERT_EQ((this->test_for<true>()('c', 2.)), 2);
 }
 
 TEST(IntegralConstant, Functionalities) {
-    entt::integral_constant<3> constant{};
+    const entt::integral_constant<3> constant{};
 
     testing::StaticAssertTypeEq<typename entt::integral_constant<3>::value_type, int>();
     ASSERT_EQ(constant.value, 3);
 }
 
 TEST(Choice, Functionalities) {
-    ASSERT_TRUE((std::is_base_of_v<entt::choice_t<0>, entt::choice_t<1>>));
-    ASSERT_FALSE((std::is_base_of_v<entt::choice_t<1>, entt::choice_t<0>>));
+    static_assert(std::is_base_of_v<entt::choice_t<0>, entt::choice_t<1>>, "Base type required");
+    static_assert(!std::is_base_of_v<entt::choice_t<1>, entt::choice_t<0>>, "Base type not allowed");
 }
 
 TEST(TypeList, Functionalities) {
@@ -162,12 +164,12 @@ TEST(ValueList, Functionalities) {
     testing::StaticAssertTypeEq<entt::value_list_diff_t<entt::value_list<0, 1, 2>, entt::value_list<1>>, entt::value_list<0, 2>>();
 
     ASSERT_EQ((std::tuple_size_v<entt::value_list<>>), 0u);
-    ASSERT_EQ((std::tuple_size_v<entt::value_list<42>>), 1u);
-    ASSERT_EQ((std::tuple_size_v<entt::value_list<42, 'a'>>), 2u);
+    ASSERT_EQ((std::tuple_size_v<entt::value_list<4>>), 1u);
+    ASSERT_EQ((std::tuple_size_v<entt::value_list<4, 'a'>>), 2u);
 
-    testing::StaticAssertTypeEq<int, std::tuple_element_t<0, entt::value_list<42>>>();
-    testing::StaticAssertTypeEq<int, std::tuple_element_t<0, entt::value_list<42, 'a'>>>();
-    testing::StaticAssertTypeEq<char, std::tuple_element_t<1, entt::value_list<42, 'a'>>>();
+    testing::StaticAssertTypeEq<int, std::tuple_element_t<0, entt::value_list<4>>>();
+    testing::StaticAssertTypeEq<int, std::tuple_element_t<0, entt::value_list<4, 'a'>>>();
+    testing::StaticAssertTypeEq<char, std::tuple_element_t<1, entt::value_list<4, 'a'>>>();
 }
 
 TEST(IsApplicable, Functionalities) {
@@ -223,6 +225,7 @@ TEST(IsEqualityComparable, Functionalities) {
     ASSERT_TRUE((entt::is_equality_comparable_v<std::optional<int>>));
     ASSERT_TRUE(entt::is_equality_comparable_v<nlohmann_json_like>);
 
+    // NOLINTNEXTLINE(*-avoid-c-arrays)
     ASSERT_FALSE(entt::is_equality_comparable_v<int[3u]>);
     ASSERT_FALSE(entt::is_equality_comparable_v<test::non_comparable>);
     ASSERT_FALSE(entt::is_equality_comparable_v<const test::non_comparable>);
@@ -261,7 +264,12 @@ TEST(NthArgument, Functionalities) {
     testing::StaticAssertTypeEq<entt::nth_argument_t<1u, decltype(&clazz::bar)>, float>();
     testing::StaticAssertTypeEq<entt::nth_argument_t<0u, decltype(&clazz::quux)>, bool>();
 
-    ASSERT_EQ(free_function(entt::nth_argument_t<0u, decltype(&free_function)>{}, entt::nth_argument_t<1u, decltype(&free_function)>{}), 42);
+    ASSERT_EQ(free_function(entt::nth_argument_t<0u, decltype(&free_function)>{}, entt::nth_argument_t<1u, decltype(&free_function)>{}), 64);
+
+    [[maybe_unused]] auto lambda = [value = 0u](int, float &) { return value; };
+
+    testing::StaticAssertTypeEq<entt::nth_argument_t<0u, decltype(lambda)>, int>();
+    testing::StaticAssertTypeEq<entt::nth_argument_t<1u, decltype(lambda)>, float &>();
 }
 
 TEST(Tag, Functionalities) {
