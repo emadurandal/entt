@@ -3,11 +3,6 @@
 include(FetchContent)
 include(CheckCXXSourceCompiles)
 
-check_cxx_source_compiles("
-    #include<version>
-    int main() { return 0; }
-" ENTT_HAS_HEADER_VERSION)
-
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
@@ -21,20 +16,22 @@ else()
         GIT_SHALLOW 1
     )
 
-    FetchContent_GetProperties(googletest)
-
-    if(NOT googletest_POPULATED)
-        FetchContent_Populate(googletest)
-        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-        add_subdirectory(${googletest_SOURCE_DIR} ${googletest_BINARY_DIR})
-    endif()
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
 
     add_library(GTest::Main ALIAS gtest_main)
 
     target_compile_features(gtest PUBLIC cxx_std_17)
+    set_target_properties(gtest PROPERTIES CXX_CLANG_TIDY "")
+
     target_compile_features(gtest_main PUBLIC cxx_std_17)
+    set_target_properties(gtest_main PROPERTIES CXX_CLANG_TIDY "")
+
     target_compile_features(gmock PUBLIC cxx_std_17)
+    set_target_properties(gmock PROPERTIES CXX_CLANG_TIDY "")
+
     target_compile_features(gmock_main PUBLIC cxx_std_17)
+    set_target_properties(gmock_main PROPERTIES CXX_CLANG_TIDY "")
 endif()
 
 include_directories($<TARGET_PROPERTY:EnTT,INTERFACE_INCLUDE_DIRECTORIES>)
@@ -49,21 +46,12 @@ function(SETUP_TARGET TARGET_NAME)
         target_compile_options(
             ${TARGET_NAME}
             PRIVATE
-                # vs2017 emits too many false positives for my tastes
-                $<IF:$<EQUAL:${MSVC_TOOLSET_VERSION},141>, /W1, /W4>
-                # clang-cl goes a little wrong with some warnings instead
                 $<$<STREQUAL:"${CMAKE_CXX_COMPILER_ID}","Clang">:
+                    -Wdocumentation
                     -Wno-deprecated-declarations
-                    -Wno-ignored-qualifiers
-                    -Wno-unknown-warning-option
                     -Wno-exceptions
-                    -Wno-unused-local-typedef
-                    -Wno-unused-private-field
+                    -Wconversion
                 >
-                # documentation diagnostic turned on for clang-cl only
-                $<$<STREQUAL:"${CMAKE_CXX_COMPILER_ID}","Clang">:-Wdocumentation>
-                # warnings from compilers that think I don't know what I'm doing
-                $<$<STREQUAL:"${CMAKE_CXX_COMPILER_ID}","Clang">:-Wcomma>
                 /EHsc /wd4324 /wd4996
                 # disabling INCREMENTAL is required by SizeBench
                 $<$<CONFIG:Debug>:/Od /INCREMENTAL:NO>
@@ -80,7 +68,12 @@ function(SETUP_TARGET TARGET_NAME)
         target_compile_options(
             ${TARGET_NAME}
             PRIVATE
-                -pedantic -fvisibility=hidden -Wall -Wshadow -Wno-deprecated-declarations
+                -fvisibility=hidden
+                -pedantic
+                -Wall
+                -Wconversion
+                -Wno-deprecated-declarations
+                -Wshadow
                 $<$<CONFIG:Debug>:-O0 -g>
                 $<$<CONFIG:Release>:-O2>
         )
@@ -94,14 +87,6 @@ function(SETUP_TARGET TARGET_NAME)
             NOMINMAX
             ${ARGN}
     )
-
-    if(ENTT_HAS_HEADER_VERSION)
-        target_compile_definitions(
-            ${TARGET_NAME}
-            PRIVATE
-                ENTT_HAS_HEADER_VERSION
-        )
-    endif()
 endfunction()
 
 add_library(odr OBJECT odr.cpp)
@@ -121,6 +106,7 @@ function(SETUP_LIB_SHARED_TEST TEST_NAME SUB_PATH)
     add_library(_${TARGET_NAME} SHARED $<TARGET_OBJECTS:odr> lib/${TEST_NAME}/${SUB_PATH}/lib.cpp)
     SETUP_TARGET(_${TARGET_NAME} ENTT_API_EXPORT)
     SETUP_BASIC_TEST(lib_${TARGET_NAME} lib/${TEST_NAME}/${SUB_PATH}/main.cpp ENTT_API_IMPORT)
+    set_target_properties(lib_${TARGET_NAME} PROPERTIES CXX_CLANG_TIDY "")
     target_link_libraries(lib_${TARGET_NAME} PRIVATE _${TARGET_NAME})
 endfunction()
 
@@ -129,8 +115,12 @@ function(SETUP_LIB_PLUGIN_TEST TEST_NAME SUB_PATH)
     add_library(_${TARGET_NAME} MODULE $<TARGET_OBJECTS:odr> lib/${TEST_NAME}/${SUB_PATH}/plugin.cpp)
     SETUP_TARGET(_${TARGET_NAME} ${ARGVN})
     SETUP_BASIC_TEST(lib_${TARGET_NAME} lib/${TEST_NAME}/${SUB_PATH}/main.cpp PLUGIN="$<TARGET_FILE:_${TARGET_NAME}>" ${ARGVN})
+    set_target_properties(_${TARGET_NAME} PROPERTIES CXX_CLANG_TIDY "")
+    set_target_properties(lib_${TARGET_NAME} PROPERTIES CXX_CLANG_TIDY "")
     target_include_directories(_${TARGET_NAME} PRIVATE ${cr_INCLUDE_DIR})
     target_include_directories(lib_${TARGET_NAME} PRIVATE ${cr_INCLUDE_DIR})
+    target_compile_options(_${TARGET_NAME} PRIVATE $<$<NOT:$<STREQUAL:"${CMAKE_CXX_COMPILER_ID}","MSVC">>:-Wno-conversion>)
+    target_compile_options(lib_${TARGET_NAME} PRIVATE $<$<NOT:$<STREQUAL:"${CMAKE_CXX_COMPILER_ID}","MSVC">>:-Wno-conversion>)
     target_link_libraries(lib_${TARGET_NAME} PRIVATE ${CMAKE_DL_LIBS})
     add_dependencies(lib_${TARGET_NAME} _${TARGET_NAME})
 endfunction()
@@ -139,6 +129,7 @@ endfunction()
 
 if(ENTT_BUILD_BENCHMARK)
     SETUP_BASIC_TEST(benchmark benchmark/benchmark.cpp)
+    set_target_properties(benchmark PROPERTIES CXX_CLANG_TIDY "")
 endif()
 
 # Test example
@@ -146,6 +137,7 @@ endif()
 if(ENTT_BUILD_EXAMPLE)
     SETUP_BASIC_TEST(custom_identifier example/custom_identifier.cpp)
     SETUP_BASIC_TEST(entity_copy example/entity_copy.cpp)
+    SETUP_BASIC_TEST(reserved_bits example/reserved_bits.cpp)
     SETUP_BASIC_TEST(signal_less example/signal_less.cpp)
 endif()
 
@@ -181,6 +173,9 @@ if(ENTT_BUILD_LIB)
 
     SETUP_LIB_SHARED_TEST(registry shared)
     SETUP_LIB_PLUGIN_TEST(registry plugin)
+
+    SETUP_LIB_SHARED_TEST(view shared)
+    SETUP_LIB_PLUGIN_TEST(view plugin)
 endif()
 
 # Test snapshot
@@ -201,7 +196,10 @@ if(ENTT_BUILD_SNAPSHOT)
     endif()
 
     SETUP_BASIC_TEST(cereal snapshot/snapshot.cpp)
+
+    set_target_properties(cereal PROPERTIES CXX_CLANG_TIDY "")
     target_include_directories(cereal PRIVATE ${cereal_INCLUDE_DIR})
+    target_compile_options(cereal PRIVATE $<$<NOT:$<STREQUAL:"${CMAKE_CXX_COMPILER_ID}","MSVC">>:-Wno-conversion>)
 endif()
 
 # Test config
@@ -212,11 +210,13 @@ SETUP_BASIC_TEST(version entt/config/version.cpp)
 
 SETUP_BASIC_TEST(dense_map entt/container/dense_map.cpp)
 SETUP_BASIC_TEST(dense_set entt/container/dense_set.cpp)
+SETUP_BASIC_TEST(table entt/container/table.cpp)
 
 # Test core
 
 SETUP_BASIC_TEST(algorithm entt/core/algorithm.cpp)
 SETUP_BASIC_TEST(any entt/core/any.cpp)
+SETUP_BASIC_TEST(bit entt/core/bit.cpp)
 SETUP_BASIC_TEST(compressed_pair entt/core/compressed_pair.cpp)
 SETUP_BASIC_TEST(enum entt/core/enum.cpp)
 SETUP_BASIC_TEST(family entt/core/family.cpp)
@@ -237,8 +237,8 @@ SETUP_BASIC_TEST(entity entt/entity/entity.cpp)
 SETUP_BASIC_TEST(group entt/entity/group.cpp)
 SETUP_BASIC_TEST(handle entt/entity/handle.cpp)
 SETUP_BASIC_TEST(helper entt/entity/helper.cpp)
-SETUP_BASIC_TEST(observer entt/entity/observer.cpp)
 SETUP_BASIC_TEST(organizer entt/entity/organizer.cpp)
+SETUP_BASIC_TEST(reactive_mixin entt/entity/reactive_mixin.cpp)
 SETUP_BASIC_TEST(registry entt/entity/registry.cpp)
 SETUP_BASIC_TEST(runtime_view entt/entity/runtime_view.cpp)
 SETUP_BASIC_TEST(sigh_mixin entt/entity/sigh_mixin.cpp)
@@ -248,6 +248,7 @@ SETUP_BASIC_TEST(storage entt/entity/storage.cpp)
 SETUP_BASIC_TEST(storage_entity entt/entity/storage_entity.cpp)
 SETUP_BASIC_TEST(storage_no_instance entt/entity/storage_no_instance.cpp)
 SETUP_BASIC_TEST(storage_utility entt/entity/storage_utility.cpp)
+SETUP_BASIC_TEST(storage_utility_no_mixin entt/entity/storage_utility.cpp ENTT_NO_MIXIN)
 SETUP_BASIC_TEST(view entt/entity/view.cpp)
 
 # Test graph
@@ -268,12 +269,13 @@ SETUP_BASIC_TEST(meta_container entt/meta/meta_container.cpp)
 SETUP_BASIC_TEST(meta_context entt/meta/meta_context.cpp)
 SETUP_BASIC_TEST(meta_conv entt/meta/meta_conv.cpp)
 SETUP_BASIC_TEST(meta_ctor entt/meta/meta_ctor.cpp)
+SETUP_BASIC_TEST(meta_custom entt/meta/meta_custom.cpp)
 SETUP_BASIC_TEST(meta_data entt/meta/meta_data.cpp)
 SETUP_BASIC_TEST(meta_dtor entt/meta/meta_dtor.cpp)
+SETUP_BASIC_TEST(meta_factory entt/meta/meta_factory.cpp)
 SETUP_BASIC_TEST(meta_func entt/meta/meta_func.cpp)
 SETUP_BASIC_TEST(meta_handle entt/meta/meta_handle.cpp)
 SETUP_BASIC_TEST(meta_pointer entt/meta/meta_pointer.cpp)
-SETUP_BASIC_TEST(meta_prop entt/meta/meta_prop.cpp)
 SETUP_BASIC_TEST(meta_range entt/meta/meta_range.cpp)
 SETUP_BASIC_TEST(meta_template entt/meta/meta_template.cpp)
 SETUP_BASIC_TEST(meta_type entt/meta/meta_type.cpp)

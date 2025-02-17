@@ -1,14 +1,12 @@
 # Crash Course: core functionalities
 
-<!--
-@cond TURN_OFF_DOXYGEN
--->
 # Table of Contents
 
 * [Introduction](#introduction)
 * [Any as in any type](#any-as-in-any-type)
   * [Small buffer optimization](#small-buffer-optimization)
   * [Alignment requirement](#alignment-requirement)
+* [Bit](#bit)
 * [Compressed pair](#compressed-pair)
 * [Enum as bitmask](#enum-as-bitmask)
 * [Hashed strings](#hashed-strings)
@@ -19,7 +17,6 @@
   * [Iota iterator](#iota-iterator)
   * [Iterable adaptor](#iterable-adaptor)
 * [Memory](#memory)
-  * [Power of two and fast modulus](#power-of-two-and-fast-modulus)
   * [Allocator aware unique pointers](#allocator-aware-unique-pointers)
 * [Monostate](#monostate)
 * [Type support](#type-support)
@@ -39,9 +36,6 @@
   * [Compile-time generator](#compile-time-generator)
   * [Runtime generator](#runtime-generator)
 * [Utilities](#utilities)
-<!--
-@endcond TURN_OFF_DOXYGEN
--->
 
 # Introduction
 
@@ -74,18 +68,21 @@ entt::any empty{};
 // a container for an int
 entt::any any{0};
 
-// in place construction
-entt::any in_place{std::in_place_type<int>, 42};
+// in place type construction
+entt::any in_place_type{std::in_place_type<int>, 42};
+
+// take ownership of already existing, dynamically allocated objects
+entt::any in_place{std::in_place, std::make_unique<int>(42).release()};
 ```
 
-Alternatively, the `make_any` function serves the same purpose but requires to
-always be explicit about the type:
+Alternatively, the `make_any` function serves the same purpose. It requires to
+always be explicit about the type and doesn't support taking ownership:
 
 ```cpp
 entt::any any = entt::make_any<int>(42);
 ```
 
-In both cases, the `any` class takes the burden of destroying the contained
+In all cases, the `any` class takes the burden of destroying the contained
 element when required, regardless of the storage strategy used for the specific
 object.<br/>
 Furthermore, an instance of `any` isn't tied to an actual type. Therefore, the
@@ -201,6 +198,22 @@ using my_any = entt::basic_any<sizeof(double[4]), alignof(double[4])>;
 The `basic_any` class template inspects the alignment requirements in each case,
 even when not provided and may decide not to use the small buffer optimization
 in order to meet them.
+
+# Bit
+
+Finding out the population count of an unsigned integral value (`popcount`),
+whether a number is a power of two or not (`has_single_bit`) as well as the next
+power of two given a random value (`next_power_of_two`) can be useful.<br/>
+For example, it helps to allocate memory in pages having a size suitable for the
+fast modulus:
+
+```cpp
+const std::size_t result = entt::fast_mod(value, modulus);
+```
+
+Where `modulus` is necessarily a power of two. Perhaps not everyone knows that
+this type of operation is far superior in terms of performance to the basic
+modulus and for this reason preferred in many areas.
 
 # Compressed pair
 
@@ -441,22 +454,6 @@ unwrap fancy or plain pointers (`to_address`) or to help forget the meaning of
 acronyms like _POCCA_, _POCMA_ or _POCS_.<br/>
 I won't describe them here in detail. Instead, I recommend reading the inline
 documentation to those interested in the subject.
-
-## Power of two and fast modulus
-
-Finding out if a number is a power of two (`is_power_of_two`) or what the next
-power of two is given a random value (`next_power_of_two`) is very useful at
-times.<br/>
-For example, it helps to allocate memory in pages having a size suitable for the
-fast modulus:
-
-```cpp
-const std::size_t result = entt::fast_mod(value, modulus);
-```
-
-Where `modulus` is necessarily a power of two. Perhaps not everyone knows that
-this type of operation is far superior in terms of performance to the basic
-modulus and for this reason preferred in many areas.
 
 ## Allocator aware unique pointers
 

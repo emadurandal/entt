@@ -12,7 +12,9 @@ struct MetaRange: ::testing::Test {
     void SetUp() override {
         using namespace entt::literals;
 
-        entt::meta<int>().type("int"_hs).data<42>("answer"_hs);
+        entt::meta_factory<int>{}
+            .type("int"_hs)
+            .data<2>("answer"_hs);
     }
 
     void TearDown() override {
@@ -73,7 +75,7 @@ TEST_F(MetaRange, Iterator) {
     ASSERT_GT(end, begin);
     ASSERT_GE(end, range.end());
 
-    entt::meta<double>().type("double"_hs);
+    entt::meta_factory<double>{}.type("double"_hs);
     range = entt::resolve();
     begin = range.begin();
 
@@ -91,6 +93,6 @@ TEST_F(MetaRange, DirectValue) {
 
     for(auto &&[id, data]: range) {
         ASSERT_EQ(id, "answer"_hs);
-        ASSERT_EQ(data.get({}).cast<int>(), 42);
+        ASSERT_EQ(data.get({}).cast<int>(), 2);
     }
 }

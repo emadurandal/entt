@@ -5,57 +5,21 @@ on: [push, pull_request]
 jobs:
 
   linux:
-    timeout-minutes: 15
-
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-20.04]
         compiler:
-          - { pkg: g++, exe: 'g++', version: 7 }
-          - { pkg: g++, exe: 'g++', version: 8 }
-          - { pkg: g++, exe: 'g++', version: 9 }
-          - { pkg: g++, exe: 'g++', version: 10 }
-          - { pkg: g++, exe: 'g++', version: 11 }
           - { pkg: g++, exe: 'g++', version: 12 }
-          - { pkg: clang, exe: 'clang++', version: 8 }
-          - { pkg: clang, exe: 'clang++', version: 9 }
-          - { pkg: clang, exe: 'clang++', version: 10 }
-          - { pkg: clang, exe: 'clang++', version: 11 }
-          - { pkg: clang, exe: 'clang++', version: 12 }
-          - { pkg: clang, exe: 'clang++', version: 13 }
-          - { pkg: clang, exe: 'clang++', version: 14 }
-        exclude:
-          - os: ubuntu-latest
-            compiler: { pkg: g++, exe: 'g++', version: 7 }
-          - os: ubuntu-latest
-            compiler: { pkg: g++, exe: 'g++', version: 8 }
-          - os: ubuntu-latest
-            compiler: { pkg: g++, exe: 'g++', version: 9 }
-          - os: ubuntu-latest
-            compiler: { pkg: clang, exe: 'clang++', version: 8 }
-          - os: ubuntu-latest
-            compiler: { pkg: clang, exe: 'clang++', version: 9 }
-          - os: ubuntu-latest
-            compiler: { pkg: clang, exe: 'clang++', version: 10 }
-          - os: ubuntu-latest
-            compiler: { pkg: clang, exe: 'clang++', version: 11 }
-          - os: ubuntu-20.04
-            compiler: { pkg: g++, exe: 'g++', version: 10 }
-          - os: ubuntu-20.04
-            compiler: { pkg: g++, exe: 'g++', version: 11 }
-          - os: ubuntu-20.04
-            compiler: { pkg: g++, exe: 'g++', version: 12 }
-          - os: ubuntu-20.04
-            compiler: { pkg: clang, exe: 'clang++', version: 12 }
-          - os: ubuntu-20.04
-            compiler: { pkg: clang, exe: 'clang++', version: 13 }
-          - os: ubuntu-20.04
-            compiler: { pkg: clang, exe: 'clang++', version: 14 }
+          - { pkg: g++, exe: 'g++', version: 13 }
+          - { pkg: g++, exe: 'g++', version: 14 }
+          - { pkg: clang, exe: 'clang++', version: 16 }
+          - { pkg: clang, exe: 'clang++', version: 17 }
+          - { pkg: clang, exe: 'clang++', version: 18 }
 
-    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Install compiler
       run: |
         sudo apt update
@@ -74,23 +38,20 @@ jobs:
       run: ctest -C Debug -j4
 
   windows:
-    timeout-minutes: 15
-
     strategy:
       matrix:
-        toolset: [default, v141, v142, clang-cl]
+        toolset: [default, v142, clang-cl]
         include:
-          - toolset: v141
-            toolset_option: -T"v141"
           - toolset: v142
             toolset_option: -T"v142"
           - toolset: clang-cl
             toolset_option: -T"ClangCl"
 
+    timeout-minutes: 15
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Compile tests
       working-directory: build
       run: |
@@ -107,7 +68,7 @@ jobs:
     runs-on: macOS-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Compile tests
       working-directory: build
       run: |
@@ -120,18 +81,17 @@ jobs:
       run: ctest -C Debug -j4
 
   extra:
-    timeout-minutes: 15
-
     strategy:
       matrix:
         os: [windows-latest, macOS-latest, ubuntu-latest]
         id_type: ["std::uint32_t", "std::uint64_t"]
         cxx_std: [cxx_std_17, cxx_std_20]
 
+    timeout-minutes: 15
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Compile tests
       working-directory: build
       run: |

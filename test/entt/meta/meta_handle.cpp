@@ -4,10 +4,7 @@
 #include <entt/meta/factory.hpp>
 #include <entt/meta/meta.hpp>
 
-struct clazz_t {
-    clazz_t()
-        : value{} {}
-
+struct clazz {
     void incr() {
         ++value;
     }
@@ -16,17 +13,17 @@ struct clazz_t {
         --value;
     }
 
-    int value;
+    int value{};
 };
 
 struct MetaHandle: ::testing::Test {
     void SetUp() override {
         using namespace entt::literals;
 
-        entt::meta<clazz_t>()
+        entt::meta_factory<clazz>{}
             .type("clazz"_hs)
-            .func<&clazz_t::incr>("incr"_hs)
-            .func<&clazz_t::decr>("decr"_hs);
+            .func<&clazz::incr>("incr"_hs)
+            .func<&clazz::decr>("decr"_hs);
     }
 
     void TearDown() override {
@@ -34,10 +31,10 @@ struct MetaHandle: ::testing::Test {
     }
 };
 
-TEST_F(MetaHandle, Functionalities) {
+TEST_F(MetaHandle, Handle) {
     using namespace entt::literals;
 
-    clazz_t instance{};
+    clazz instance{};
     entt::meta_handle handle{};
     entt::meta_handle chandle{};
 

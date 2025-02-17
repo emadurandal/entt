@@ -12,18 +12,14 @@
 #include <utility>
 #include <vector>
 #include "../config/config.h"
+#include "../core/bit.hpp"
 #include "../core/compressed_pair.hpp"
-#include "../core/memory.hpp"
 #include "../core/type_traits.hpp"
 #include "fwd.hpp"
 
 namespace entt {
 
-/**
- * @cond TURN_OFF_DOXYGEN
- * Internal details not to be documented.
- */
-
+/*! @cond TURN_OFF_DOXYGEN */
 namespace internal {
 
 template<typename It>
@@ -53,7 +49,7 @@ public:
     }
 
     constexpr dense_set_iterator operator++(int) noexcept {
-        dense_set_iterator orig = *this;
+        const dense_set_iterator orig = *this;
         return ++(*this), orig;
     }
 
@@ -62,7 +58,7 @@ public:
     }
 
     constexpr dense_set_iterator operator--(int) noexcept {
-        dense_set_iterator orig = *this;
+        const dense_set_iterator orig = *this;
         return operator--(), orig;
     }
 
@@ -89,11 +85,11 @@ public:
     }
 
     [[nodiscard]] constexpr pointer operator->() const noexcept {
-        return std::addressof(it->second);
+        return std::addressof(operator[](0));
     }
 
     [[nodiscard]] constexpr reference operator*() const noexcept {
-        return *operator->();
+        return operator[](0);
     }
 
     template<typename Lhs, typename Rhs>
@@ -170,16 +166,16 @@ public:
           offset{other.offset} {}
 
     constexpr dense_set_local_iterator &operator++() noexcept {
-        return offset = it[offset].first, *this;
+        return offset = it[static_cast<typename It::difference_type>(offset)].first, *this;
     }
 
     constexpr dense_set_local_iterator operator++(int) noexcept {
-        dense_set_local_iterator orig = *this;
+        const dense_set_local_iterator orig = *this;
         return ++(*this), orig;
     }
 
     [[nodiscard]] constexpr pointer operator->() const noexcept {
-        return std::addressof(it[offset].second);
+        return std::addressof(it[static_cast<typename It::difference_type>(offset)].second);
     }
 
     [[nodiscard]] constexpr reference operator*() const noexcept {
@@ -206,11 +202,7 @@ template<typename Lhs, typename Rhs>
 }
 
 } // namespace internal
-
-/**
- * Internal details not to be documented.
- * @endcond
- */
+/*! @endcond */
 
 /**
  * @brief Associative container for unique objects of a given type.
@@ -244,7 +236,7 @@ class dense_set {
     [[nodiscard]] auto constrained_find(const Other &value, std::size_t bucket) {
         for(auto it = begin(bucket), last = end(bucket); it != last; ++it) {
             if(packed.second()(*it, value)) {
-                return begin() + static_cast<typename iterator::difference_type>(it.index());
+                return begin() + static_cast<difference_type>(it.index());
             }
         }
 
@@ -255,7 +247,7 @@ class dense_set {
     [[nodiscard]] auto constrained_find(const Other &value, std::size_t bucket) const {
         for(auto it = cbegin(bucket), last = cend(bucket); it != last; ++it) {
             if(packed.second()(*it, value)) {
-                return cbegin() + static_cast<typename iterator::difference_type>(it.index());
+                return cbegin() + static_cast<difference_type>(it.index());
             }
         }
 
@@ -279,7 +271,7 @@ class dense_set {
 
     void move_and_pop(const std::size_t pos) {
         if(const auto last = size() - 1u; pos != last) {
-            size_type *curr = sparse.first().data() + value_to_bucket(packed.first().back().second);
+            size_type *curr = &sparse.first()[value_to_bucket(packed.first().back().second)];
             packed.first()[pos] = std::move(packed.first().back());
             for(; *curr != last; curr = &packed.first()[*curr].first) {}
             *curr = pos;
@@ -289,24 +281,26 @@ class dense_set {
     }
 
     void rehash_if_required() {
-        if(size() > (bucket_count() * max_load_factor())) {
-            rehash(bucket_count() * 2u);
+        if(const auto bc = bucket_count(); size() > static_cast<size_type>(static_cast<float>(bc) * max_load_factor())) {
+            rehash(bc * 2u);
         }
     }
 
 public:
+    /*! @brief Allocator type. */
+    using allocator_type = Allocator;
     /*! @brief Key type of the container. */
     using key_type = Type;
     /*! @brief Value type of the container. */
     using value_type = Type;
     /*! @brief Unsigned integer type. */
     using size_type = std::size_t;
+    /*! @brief Signed integer type. */
+    using difference_type = std::ptrdiff_t;
     /*! @brief Type of function to use to hash the elements. */
     using hasher = Hash;
     /*! @brief Type of function to use to compare the elements for equality. */
     using key_equal = KeyEqual;
-    /*! @brief Allocator type. */
-    using allocator_type = Allocator;
     /*! @brief Random access iterator type. */
     using iterator = internal::dense_set_iterator<typename packed_container_type::iterator>;
     /*! @brief Constant random access iterator type. */
@@ -360,8 +354,7 @@ public:
      */
     explicit dense_set(const size_type cnt, const hasher &hash = hasher{}, const key_equal &equal = key_equal{}, const allocator_type &allocator = allocator_type{})
         : sparse{allocator, hash},
-          packed{allocator, equal},
-          threshold{default_threshold} {
+          packed{allocator, equal} {
         rehash(cnt);
     }
 
@@ -379,7 +372,7 @@ public:
           threshold{other.threshold} {}
 
     /*! @brief Default move constructor. */
-    dense_set(dense_set &&) noexcept(std::is_nothrow_move_constructible_v<compressed_pair<sparse_container_type, hasher>> &&std::is_nothrow_move_constructible_v<compressed_pair<packed_container_type, key_equal>>) = default;
+    dense_set(dense_set &&) noexcept = default;
 
     /**
      * @brief Allocator-extended move constructor.
@@ -391,6 +384,9 @@ public:
           packed{std::piecewise_construct, std::forward_as_tuple(std::move(other.packed.first()), allocator), std::forward_as_tuple(std::move(other.packed.second()))},
           threshold{other.threshold} {}
 
+    /*! @brief Default destructor. */
+    ~dense_set() = default;
+
     /**
      * @brief Default copy assignment operator.
      * @return This container.
@@ -401,7 +397,7 @@ public:
      * @brief Default move assignment operator.
      * @return This container.
      */
-    dense_set &operator=(dense_set &&) noexcept(std::is_nothrow_move_assignable_v<compressed_pair<sparse_container_type, hasher>> &&std::is_nothrow_move_assignable_v<compressed_pair<packed_container_type, key_equal>>) = default;
+    dense_set &operator=(dense_set &&) noexcept = default;
 
     /**
      * @brief Returns the associated allocator.
@@ -605,7 +601,7 @@ public:
         const auto dist = first - cbegin();
 
         for(auto from = last - cbegin(); from != dist; --from) {
-            erase(packed.first()[from - 1u].second);
+            erase(packed.first()[static_cast<size_type>(from) - 1u].second);
         }
 
         return (begin() + dist);
@@ -617,7 +613,7 @@ public:
      * @return Number of elements removed (either 0 or 1).
      */
     size_type erase(const value_type &value) {
-        for(size_type *curr = sparse.first().data() + value_to_bucket(value); *curr != (std::numeric_limits<size_type>::max)(); curr = &packed.first()[*curr].first) {
+        for(size_type *curr = &sparse.first()[value_to_bucket(value)]; *curr != (std::numeric_limits<size_type>::max)(); curr = &packed.first()[*curr].first) {
             if(packed.second()(packed.first()[*curr].second, value)) {
                 const auto index = *curr;
                 *curr = packed.first()[*curr].first;
@@ -633,7 +629,7 @@ public:
      * @brief Exchanges the contents with those of a given container.
      * @param other Container to exchange the content with.
      */
-    void swap(dense_set &other) {
+    void swap(dense_set &other) noexcept {
         using std::swap;
         swap(sparse, other.sparse);
         swap(packed, other.packed);
@@ -851,7 +847,7 @@ public:
      * @return The average number of elements per bucket.
      */
     [[nodiscard]] float load_factor() const {
-        return size() / static_cast<float>(bucket_count());
+        return static_cast<float>(size()) / static_cast<float>(bucket_count());
     }
 
     /**
@@ -879,7 +875,7 @@ public:
      */
     void rehash(const size_type cnt) {
         auto value = cnt > minimum_capacity ? cnt : minimum_capacity;
-        const auto cap = static_cast<size_type>(size() / max_load_factor());
+        const auto cap = static_cast<size_type>(static_cast<float>(size()) / max_load_factor());
         value = value > cap ? value : cap;
 
         if(const auto sz = next_power_of_two(value); sz != bucket_count()) {
@@ -903,7 +899,7 @@ public:
      */
     void reserve(const size_type cnt) {
         packed.first().reserve(cnt);
-        rehash(static_cast<size_type>(std::ceil(cnt / max_load_factor())));
+        rehash(static_cast<size_type>(std::ceil(static_cast<float>(cnt) / max_load_factor())));
     }
 
     /**
@@ -925,7 +921,7 @@ public:
 private:
     compressed_pair<sparse_container_type, hasher> sparse;
     compressed_pair<packed_container_type, key_equal> packed;
-    float threshold;
+    float threshold{default_threshold};
 };
 
 } // namespace entt
